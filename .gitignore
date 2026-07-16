@@ -1,0 +1,31 @@
+# ===== Local env (version pins; bootstrapped from .env.example by setup.sh) =====
+/.env
+
+# ===== OS / editor =====
+.DS_Store
+*.swp
+*~
+
+# ===== Local scratch / backups (may contain credentials) =====
+/tmp/
+*.bulk
+
+# ===== Local fess_config overrides (secrets: cipher key, password, ...) =====
+/conf/fess_config.local.properties
+
+# ===== Fess: runtime & generated (bind-mounted) =====
+/data/fess/home/fess/
+/data/fess/var/
+/data/fess/usr/share/fess/app/WEB-INF/plugin/
+/data/fess/themes/
+
+# /opt/fess: ignore generated/live config, keep the tracked template.
+# This directory-wildcard pattern (plus the negation below) already covers:
+#   data/fess/opt/fess/fess_config.properties
+#   data/fess/opt/fess/.fess_config.base-*.properties
+#   data/fess/opt/fess/system.properties
+/data/fess/opt/fess/*
+!/data/fess/opt/fess/system.properties.template
+
+# ===== OpenSearch: runtime data & dictionary (bind-mounted) =====
+/data/opensearch/

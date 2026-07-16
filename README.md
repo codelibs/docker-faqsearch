@@ -1,0 +1,316 @@
+# FAQ Search on Fess (helpdesk theme demo)
+
+[Fess](https://fess.codelibs.org/) is an Enterprise Search Server. This Docker
+environment is a demo/reference deployment of Fess's **`helpdesk`** static
+theme (from [fess-themes](https://github.com/codelibs/fess-themes)) — a
+self-contained FAQ / support-site search UI where a search result **is** the
+answer: clicking a result expands its excerpt inline, with no page
+navigation. It crawls a small bundled FAQ site (`data/content/`, served by a
+local nginx container) so the whole thing runs standalone, with no external
+dependencies.
+
+## Architecture / Theme Model
+
+- **Theme**: Fess 15.7 static theme system — `theme.default=helpdesk` in
+  `system.properties` selects the helpdesk theme. **This is a system
+  property, not a `fess_config.properties` key** — see
+  `Constants.DEFAULT_THEME_PROPERTY` / `FessProp.getDefaultTheme()` /
+  `ThemeRegistry` in the Fess source. It lives in
+  `data/fess/opt/fess/system.properties.template` and is applied via
+  `data/fess/opt/fess/system.properties` (generated from the template by
+  `setup.sh` on first run, then live/git-ignored). Putting `theme.default` in
+  the `fess_config.properties` overlay has **no effect** — Fess never reads
+  it from there.
+- **Content**: a small nginx container (`content` service) serves
+  `data/content/` — 12 FAQ pages (6 Japanese, 6 English) plus an
+  `index.html` hub linking all of them — over plain HTTP at
+  `http://content/`. Fess crawls it as a **WebConfig**, not a data-store
+  connector: there is no Git repository or database behind this demo, just
+  static HTML, so the crawl target must be reachable over HTTP for the
+  cached-page feature (`crawler.document.cache.supported.mimetypes` is
+  `text/html`) — a `file://` crawl would leave documents without a cache and
+  break the theme's "View original page" link, which depends on it.
+- **Fess config (`fess_config.properties`)**: `setup.sh` generates
+  `data/fess/opt/fess/fess_config.properties` from the upstream base for the
+  pinned Fess version plus the faqsearch overlay
+  (`conf/fess_config.overlay.properties`) and an optional local override
+  (`conf/fess_config.local.properties`). It is mounted at `/opt/fess`, which
+  the image places ahead of its `/etc/fess` default on the classpath, so the
+  generated file takes effect. Only the delta is tracked in git; the base
+  auto-tracks the pinned version. See
+  [Required Fess settings](#required-fess-settings) below.
+- **Version pins (`.env`)**: `FESS_VERSION` / `OPENSEARCH_VERSION` /
+  `NGINX_IMAGE` are the single source of truth for the image tags
+  (`compose.yaml`) and the `fess_config.properties` base. `.env` is
+  git-ignored; `setup.sh` bootstraps it from the tracked `.env.example` on
+  first run, and both `compose.yaml` and `render-fess-config.sh` fall back to
+  the same defaults when it is absent.
+- **system.properties**: The live file
+  (`data/fess/opt/fess/system.properties`) is generated from
+  `data/fess/opt/fess/system.properties.template` by `setup.sh` on first
+  run. The live file is git-ignored.
+- **Theme files**: The helpdesk static theme is fetched from
+  [fess-themes](https://github.com/codelibs/fess-themes) by `setup.sh` and
+  stored in `data/fess/themes/helpdesk/`. This directory is mounted into the
+  container at `/usr/share/fess/app/themes/helpdesk`.
+- **Network**: `fess01`, `search01`, and `content` all join a dedicated
+  bridge network (`faqsearch_net`) so `fess01` can resolve `http://content/`
+  by container name. `fess01` waits on `content`'s healthcheck
+  (`depends_on: content: condition: service_healthy`) so the crawler never
+  races nginx's startup.
+- **Management CLI (`fessctl`)**: The WebConfig and the demo seed data
+  (labels, related content, related query, search-log/suggest seeding) are
+  registered with [`fessctl`](https://github.com/codelibs/fessctl), the
+  official Fess admin-API CLI (see [Install fessctl](#install-fessctl)).
+
+## Getting Started
+
+### Setup
+
+```bash
+$ git clone <this-repo-url> docker-faqsearch   # or use your local checkout
+$ cd docker-faqsearch
+$ bash ./bin/setup.sh
+```
+
+> **Working on the theme itself?** `setup.sh` fetches `helpdesk` from the
+> `main` branch of the public fess-themes repo by default. Override either end
+> to test unreleased theme changes — `FESS_THEMES_REPO` accepts anything
+> `git clone` does, including a local filesystem path:
+>
+> ```bash
+> FESS_THEMES_REPO=/path/to/local/fess-themes \
+> FESS_THEMES_BRANCH=my-theme-branch \
+>   ./bin/setup.sh
+> ```
+
+`setup.sh` will:
+1. Create required data directories
+2. Fetch the helpdesk static theme from fess-themes (if not already present)
+3. Generate `data/fess/opt/fess/system.properties` from the template (if not
+   already present) — this is where `theme.default=helpdesk` lives
+4. Generate `data/fess/opt/fess/fess_config.properties` from the pinned base
+   + faqsearch overlay
+
+### Start the Server
+
+```bash
+docker compose -f compose.yaml up -d
+docker compose ps   # "content" should show healthy before fess01 starts crawling
+```
+
+Once running, access Fess at [http://localhost:8080/](http://localhost:8080/)
+— it should render the **helpdesk** theme immediately (home view with
+category tiles), even before anything is crawled. If it renders `docuforge`,
+a blank page, or any theme other than `helpdesk`, **suspect
+`data/fess/opt/fess/system.properties`'s `theme.default` value first** — see
+[Architecture](#architecture--theme-model) above; this is the single most
+common way to misconfigure this demo.
+
+### Create an Access Token
+
+`fessctl` authenticates to Fess with an access token. Create one with the
+`{role}admin-api` permission on the Admin Access Token page
+([http://localhost:8080/admin/accesstoken/](http://localhost:8080/admin/accesstoken/)).
+For more details, see the
+[Admin Access Token Guide](https://fess.codelibs.org/15.7/admin/accesstoken-guide.html).
+
+### Install fessctl
+
+```bash
+pipx install fessctl      # or: uv tool install fessctl
+```
+
+`fessctl` requires Python 3.13+ (`pipx` / `uv` provide it automatically).
+Point it at the server and the access token created above:
+
+```bash
+export FESS_ENDPOINT=http://localhost:8080
+export FESS_ACCESS_TOKEN=<your-access-token>
+fessctl ping    # reports the search engine status (GREEN when ready)
+```
+
+### Register and crawl the FAQ content
+
+Unlike the other `docker-*` demos, this one needs a **web crawl config**
+(`WebConfig`), not a data-store connector — there is no precedent for this
+in the sibling repos (`docker-codesearch` registers a Git data-store config;
+`docker-docsearch` leaves this to the admin UI). `bin/register-faq-crawl.sh`
+registers `http://content/` as a `WebConfig` and starts the Default Crawler
+(scheduled job id `default_crawler`), polling until the crawl finishes:
+
+```bash
+FESS_ACCESS_TOKEN=<your-access-token> ./bin/register-faq-crawl.sh
+```
+
+Re-running it is safe — it skips creation if a `WebConfig` named
+`faq-content` already exists, and always (re-)starts the crawl.
+
+### Seed labels, related content, and popular searches
+
+```bash
+FESS_ACCESS_TOKEN=<your-access-token> ./bin/seed-faq.sh
+```
+
+This registers the data the helpdesk theme is designed around (see
+[Admin-panel registration](#admin-panel-registration-seeded-by-bin-seed-faqsh)
+below) and seeds enough search-log history for "Popular searches" to show
+something on a fresh instance — see
+[Why seed-faq.sh seeds search logs](#why-seed-faqsh-seeds-search-logs) for
+why that step is otherwise unavoidable.
+
+### Search
+
+View search results at [http://localhost:8080/](http://localhost:8080/).
+
+### Stop the Server
+
+```bash
+docker compose -f compose.yaml down
+```
+
+## Required Fess settings
+
+**These are required, not optional — the helpdesk theme does not render
+usable answers on stock Fess defaults.** `conf/fess_config.overlay.properties`
+sets all of them; this section explains *why*, since the reasons are
+non-obvious (they duplicate the theme's own README —
+[fess-themes/themes/helpdesk/README.md](https://github.com/codelibs/fess-themes/blob/main/themes/helpdesk/README.md)
+— for anyone reading only this repo):
+
+```properties
+# helpdesk renders content_description AS the answer, expanded inline. Stock
+# defaults give a ~120-char teaser with its opening clause removed.
+query.highlight.fragment.size=2000
+query.highlight.number.of.fragments=1
+
+# THE non-obvious one. With the default `true`, ViewHelper.escapeHighlight()
+# walks backward from the FIRST match to the nearest "terminal" character
+# (query.highlight.terminal.chars, which includes U+002C, a COMMA, and
+# sentence-ending punctuation) and discards everything before it. So the
+# beginning of the answer is silently cut off whenever the query term isn't
+# in the answer's first clause/sentence — and no fragment.size fixes that,
+# because the cut happens before fragment.size is even applied.
+query.highlight.boundary.position.detect=false
+
+# Category tiles link to /search?q=&fields.label=X — no query terms, so
+# nothing matches `content`, so no highlighted fragment is produced at all,
+# and the answer falls back to `digest` (capped at
+# crawler.document.html.max.digest.length). fragment.size has ZERO effect on
+# this path; only no.match.size controls it.
+query.highlight.no.match.size=2000
+
+# Raises the floor for the digest fallback above. Crawl-time: requires a
+# re-crawl to take effect on already-indexed documents.
+crawler.document.html.max.digest.length=500
+```
+
+`fragment.size` and `no.match.size` above (`2000`) are a generous starting
+point for this demo's short FAQ answers (200–400 characters); tune them down
+once you've measured real answer lengths in your own content, per the theme
+README's guidance — `query.highlight.fragment.size` is a **global** server
+setting, so raising it increases every search response's payload size, not
+just helpdesk's.
+
+**Secrets / per-deployment values** (the cipher key, the initial admin
+password) must **not** go in the tracked overlay. Create
+`conf/fess_config.local.properties` (git-ignored) — its keys are applied
+last and win:
+
+```properties
+app.cipher.key=your-secret-key-here
+index.user.initial_password=your-admin-password
+```
+
+> The cipher key encrypts stored credentials; set it **before first boot**,
+> because changing it later invalidates already-encrypted data.
+
+### system.properties
+
+To modify system-level Fess settings (including `theme.default`), edit
+`data/fess/opt/fess/system.properties.template` and re-run `setup.sh`, or
+edit the live `data/fess/opt/fess/system.properties` directly. The live file
+is git-ignored.
+
+## Admin-panel registration (seeded by `bin/seed-faq.sh`)
+
+The helpdesk theme's home view and result cards are driven entirely by data
+an admin registers:
+
+- **Labels** (`/admin/labeltype/`) — power both the home view's category
+  tiles and the facet sidebar's Category group
+  (`query.facet.fields=label`, set in the overlay above). `seed-faq.sh`
+  registers labels such as "Account" / "Pricing" / "Data" / "Security" with
+  `included_paths` regexes matching the corresponding FAQ URLs in both
+  `/ja/` and `/en/`, then triggers the `label_updater` scheduled job so the
+  labels apply retroactively to already-crawled documents without a
+  re-crawl.
+- **Related content** (`/admin/relatedcontent/`) — an admin-authored
+  "Featured answer" card shown above results for a matching search term.
+  `seed-faq.sh` registers one exact-match term and one term with Fess's
+  `regex:` prefix (e.g. `regex:.*password.*`, matched with a case-sensitive
+  full-string `Pattern.matches()` against the query), to demonstrate both
+  matching modes.
+- **Related query** (`/admin/relatedquery/`) — related-search suggestions.
+  `seed-faq.sh` registers exactly **one**, deliberately, because of the
+  side effect below.
+
+> **⚠️ Registering a related query changes the search results themselves,
+> not just a UI suggestion chip.** Fess's `QueryStringBuilder`
+> (`buildBaseQuery()`) OR-expands every registered related query into the
+> actual search query sent to OpenSearch — the original query and each
+> related query are combined with `OR` and executed as one search. This
+> means a related-query registration changes **which documents match and how
+> many results come back**, not merely what's suggested. `seed-faq.sh`
+> registers only one, so you can see the effect directly; review any
+> further related-query registrations with the same care as a query
+> rewrite, because that's exactly what they are.
+
+### Why seed-faq.sh seeds search logs
+
+`popular_words` (the "Popular searches" section) reads from Fess's
+**suggest index**, not from the documents themselves. On a freshly deployed
+instance it always returns `[]`, even after a successful crawl, until all
+three of these are true: `suggest.searchlog=true` (the default),
+accumulated search-log history exists, and the suggest updater job
+(scheduled job id `suggest_indexer`) has run at least once against that
+history. `seed-faq.sh` issues a batch of representative queries against
+`/api/v2/search` to build that history, then triggers `suggest_indexer` —
+skip this step and "Popular searches" will stay empty indefinitely, which
+looks like a bug but is actually just missing seed data.
+
+**A second, non-obvious gate sits behind that one.** A query only counts as
+"popular" once its `queryFreq` in the suggest index clears
+`suggest.popular.word.query.freq` (Fess default: `10`). `queryFreq` is *not*
+"number of times searched" — `SuggestHelper.indexFromSearchLog()` dedupes
+rapid repeats from the same client (session id, or client IP + word for API
+callers with no session) within a hardcoded 1-minute window before they're
+even counted, so a seed script hammering the same query in a tight loop
+produces `queryFreq=1-2` no matter how many times it repeats the request,
+and can never clear a threshold of 10 in any reasonable amount of time. This
+overlay lowers `suggest.popular.word.query.freq` to `2` — the same class of
+demo-scale tuning as `adaptive.load.control` above: real production traffic
+naturally spans minutes and sessions and would clear 10 on its own; this
+demo's synthetic, single-burst seed traffic does not.
+
+## Updating
+
+```bash
+git pull
+```
+
+Live/generated files (`system.properties`, `fess_config.properties`, theme
+assets) are git-ignored and will not be overwritten by `git pull`.
+
+To upgrade the Fess / OpenSearch version, edit the pins in `.env`
+(`FESS_VERSION`, `OPENSEARCH_VERSION`) and re-run `setup.sh`:
+
+```bash
+bash ./bin/setup.sh
+docker compose -f compose.yaml up -d
+```
+
+> **Re-index after a major version bump**: a Fess or OpenSearch major
+> upgrade can change the index format. If search returns errors or stops
+> returning results after upgrading, re-crawl with
+> `FESS_ACCESS_TOKEN=<token> ./bin/register-faq-crawl.sh`.
