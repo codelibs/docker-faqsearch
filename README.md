@@ -23,7 +23,8 @@ dependencies.
   it from there.
 - **Content**: a small nginx container (`content` service) serves
   `data/content/` — 12 FAQ pages (6 Japanese, 6 English) plus an
-  `index.html` hub linking all of them — over plain HTTP at
+  `index.html` hub linking all of them (crawled for its links, not indexed:
+  it lists every question, so it would match almost any search) — over plain HTTP at
   `http://content/`. Fess crawls it as a **WebConfig**, not a data-store
   connector: there is no Git repository or database behind this demo, just
   static HTML, so the crawl target must be reachable over HTTP for the
