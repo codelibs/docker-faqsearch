@@ -368,12 +368,14 @@ looks like a bug but is actually just missing seed data.
 rapid repeats from the same client (session id, or client IP + word for API
 callers with no session) within a hardcoded 1-minute window before they're
 even counted, so a seed script hammering the same query in a tight loop
-produces `queryFreq=1-2` no matter how many times it repeats the request,
+produces `queryFreq=1` no matter how many times it repeats the request,
 and can never clear a threshold of 10 in any reasonable amount of time. This
 overlay lowers `suggest.popular.word.query.freq` to `2` — the same class of
 demo-scale tuning as `adaptive.load.control` above: real production traffic
 naturally spans minutes and sessions and would clear 10 on its own; this
-demo's synthetic, single-burst seed traffic does not.
+demo's synthetic seed traffic does not. To reach `2`, `seed-faq.sh` sends
+every query in two rounds one minute apart (`SEED_ROUNDS`, default `2`), so
+the search-log step takes about a minute.
 
 ## Updating
 
