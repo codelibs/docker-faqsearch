@@ -39,6 +39,7 @@ mkdir -p ${base_dir}/data/fess/usr/share/fess/app/WEB-INF/plugin
 mkdir -p ${base_dir}/data/opensearch/usr/share/opensearch/data
 mkdir -p ${base_dir}/data/opensearch/usr/share/opensearch/config/dictionary
 mkdir -p ${base_dir}/data/content
+mkdir -p ${base_dir}/data/semantic
 
 rm -f ${base_dir}/data/fess/usr/share/fess/app/WEB-INF/plugin/fess-*.jar
 
