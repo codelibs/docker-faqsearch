@@ -27,5 +27,8 @@
 /data/fess/opt/fess/*
 !/data/fess/opt/fess/system.properties.template
 
+# ===== Embedding model id written by init-semantic =====
+/data/semantic/
+
 # ===== OpenSearch: runtime data & dictionary (bind-mounted) =====
 /data/opensearch/

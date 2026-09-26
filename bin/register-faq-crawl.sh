@@ -24,6 +24,9 @@ Options:
   --no-wait            Start the crawler but do not poll for completion
   -h, --help           Show this help and exit
 
+Environment:
+  VECTOR_JOB_CRON    Schedule for the Content Chunk Vector Indexer (default: "0 * * * *")
+  MAX_WAIT           Seconds to wait for each job (default: 600)
 Environment (consumed by fessctl):
   FESS_ENDPOINT      Fess base URL (default: http://localhost:8080)
   FESS_ACCESS_TOKEN  Admin-api access token (required)
@@ -114,6 +117,48 @@ for s in d.get("response", {}).get("settings", []):
 ' || true)
 scheduler_id="${scheduler_id:-default_crawler}"
 
+# --- latest_run <job name>: "<id> <status>" of the newest job-log row of that job ---
+# Fess writes a run's job-log row from the job thread, after the start API has
+# returned, so right after a start the newest row can still be the PREVIOUS run.
+latest_run() {
+  fessctl joblog list -o json 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+# Newest entries are sorted first; report the newest run of this job.
+for log in d.get("response", {}).get("logs", []):
+    if log.get("job_name") == sys.argv[1]:
+        print(log.get("id", ""), log.get("job_status", ""))
+        break
+' "$1" || true
+}
+
+# --- wait_job <job name> <id of the run before the start>: poll the job log until
+#     a NEWER run of that job has finished ---
+wait_job() {
+  local job_name="$1" before="$2" max_wait="${MAX_WAIT:-600}" elapsed=0 interval=5 run id status
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    run=$(latest_run "$job_name")
+    id="${run%% *}"; status="${run#* }"
+    [ -n "$run" ] && [ "$id" != "$before" ] || status=""
+    case "$status" in
+      *[Rr]unning*|"") ;;
+      *)
+        echo "${job_name} finished (job_status=${status})."
+        return 0
+        ;;
+    esac
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+    echo "  ...still running (${elapsed}s elapsed)"
+  done
+  echo "Timed out after ${max_wait}s waiting for ${job_name}; check ${FESS_ENDPOINT}/admin/joblog/" >&2
+  return 1
+}
+
+crawl_before=$(latest_run "Default Crawler"); crawl_before="${crawl_before%% *}"
 echo "Starting the Default Crawler (${scheduler_id})..."
 fessctl scheduler start "$scheduler_id" -o json \
 | python3 -c '
@@ -129,36 +174,40 @@ if [ "$wait_for_crawl" -ne 1 ]; then
   exit 0
 fi
 
-# --- poll job log until the newest job for this scheduler finishes ---
 echo "Waiting for the crawl to finish (polling job log)..."
-max_wait="${MAX_WAIT:-600}"
-elapsed=0
-interval=5
-while [ "$elapsed" -lt "$max_wait" ]; do
-  status=$(fessctl joblog list -o json 2>/dev/null | python3 -c '
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-logs = d.get("response", {}).get("logs", [])
-if not logs:
-    sys.exit(0)
-# Newest entries are sorted first; report the status of the first row.
-print(logs[0].get("job_status", ""))
-' || true)
-  case "$status" in
-    *[Rr]unning*|"") ;;
-    *)
-      echo "Crawl finished (job_status=${status})."
-      echo "Results: ${FESS_ENDPOINT}/"
-      exit 0
-      ;;
-  esac
-  sleep "$interval"
-  elapsed=$((elapsed + interval))
-  echo "  ...still running (${elapsed}s elapsed)"
-done
+wait_job "Default Crawler" "$crawl_before" || exit 1
 
-echo "Timed out after ${max_wait}s waiting for the crawl to finish; check ${FESS_ENDPOINT}/admin/joblog/" >&2
-exit 1
+# --- generate the chunk vectors (the semantic half of the hybrid search) ---
+# Fess embeds documents only from the Content Chunk Vector Indexer job, never at
+# crawl time, and ships that job disabled. Enable it hourly so later crawls get
+# vectors too, then run it once now. A freshly enabled job becomes startable
+# only after the scheduler picks it up (scheduler.monitor.interval, 30s), so
+# the start is retried.
+vector_job_id="content-chunk-vector-indexer"
+vector_job_name="Content Chunk Vector Indexer"
+echo "Enabling the ${vector_job_name} (${vector_job_id})..."
+fessctl scheduler update "$vector_job_id" --available --cron-expression "${VECTOR_JOB_CRON:-0 * * * *}" -o json \
+| python3 -c '
+import sys, json
+d = json.load(sys.stdin).get("response", {})
+if d.get("status") != 0:
+    sys.stderr.write("fessctl: " + str(d.get("message", "update failed")) + "\n")
+    sys.exit(1)
+' || die "failed to enable ${vector_job_id}."
+
+vector_before=$(latest_run "$vector_job_name"); vector_before="${vector_before%% *}"
+echo "Starting the ${vector_job_name}..."
+started=0
+for _ in $(seq 1 12); do
+  if fessctl scheduler start "$vector_job_id" -o json 2>/dev/null | python3 -c '
+import sys, json
+sys.exit(0 if json.load(sys.stdin).get("response", {}).get("status") == 0 else 1)
+' 2>/dev/null; then
+    started=1
+    break
+  fi
+  sleep 10
+done
+[ "$started" -eq 1 ] || die "could not start ${vector_job_id}; start it from ${FESS_ENDPOINT}/admin/scheduler/."
+wait_job "$vector_job_name" "$vector_before" || exit 1
+echo "Results: ${FESS_ENDPOINT}/"
