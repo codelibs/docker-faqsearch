@@ -26,6 +26,8 @@ Options:
   -h, --help            Show this help and exit
 
 Environment:
+  SEED_ROUNDS        Search-log seeding rounds, one minute apart (default: 2;
+                     must reach suggest.popular.word.query.freq)
   FESS_ENDPOINT      Fess base URL (default: http://localhost:8080)
   FESS_ACCESS_TOKEN  Admin-api access token (required; consumed by fessctl)
 
@@ -148,28 +150,31 @@ fi
 #    search-log history AND a suggest_indexer run; neither alone is enough.
 #
 #    THE NON-OBVIOUS PART: a query only counts as "popular" once its
-#    queryFreq clears suggest.popular.word.query.freq, which defaults to 10
-#    (PopularWordsRequest.buildQuery() in fess-suggest adds
-#    range(query_freq).gte(threshold)). Issuing a batch of DISTINCT queries
-#    once each (queryFreq=1) never clears that gate no matter how many
-#    distinct queries you run. So each representative query below is
-#    repeated REPEAT_COUNT times (10-20, per the design brief) rather than
-#    issued once — that repetition is what "10〜20回" means here.
+#    queryFreq clears suggest.popular.word.query.freq (the overlay sets 2;
+#    PopularWordsRequest.buildQuery() in fess-suggest adds
+#    range(query_freq).gte(threshold)). queryFreq is not "times searched":
+#    SuggestHelper.indexFromSearchLog() counts an API search again only when
+#    the same client IP sent the same word more than one minute
+#    (searchStoreInterval) after the last counted one. Repeating a query in a
+#    tight loop therefore always yields queryFreq=1 — so each round below
+#    issues every query once, and the rounds are one minute apart.
 # ---------------------------------------------------------------------------
 if [ "$do_searchlog" -eq 1 ]; then
-  echo "== Seeding search-log history (repeated queries, to clear the default popular-word threshold of 10) =="
+  rounds="${SEED_ROUNDS:-2}"
+  echo "== Seeding search-log history (${rounds} rounds, one minute apart; takes about $(( (rounds - 1) * 61 ))s) =="
   queries=(
     "password" "pricing" "export" "cancel" "browser" "パスワード" "料金" "退会"
   )
-  repeat_count="${REPEAT_COUNT:-12}"
   total=0
-  for q in "${queries[@]}"; do
-    for _ in $(seq 1 "$repeat_count"); do
+  for round in $(seq 1 "$rounds"); do
+    [ "$round" -gt 1 ] && sleep 61
+    for q in "${queries[@]}"; do
       curl -s -o /dev/null -G "${FESS_ENDPOINT}/api/v2/search" --data-urlencode "q=${q}"
       total=$((total + 1))
     done
+    echo "  round ${round}/${rounds}: issued ${#queries[@]} searches"
   done
-  echo "  issued ${total} search requests (${#queries[@]} queries x ${repeat_count} repeats each)"
+  echo "  issued ${total} search requests (${#queries[@]} queries x ${rounds} rounds)"
 
   echo "  Rebuilding the suggest index from search logs (suggest_indexer)..."
   fessctl scheduler start suggest_indexer -o json | check_status
