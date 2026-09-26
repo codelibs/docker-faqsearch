@@ -80,10 +80,14 @@ if [ -n "$existing" ]; then
   echo "WebConfig already registered: ${name} (id=${existing}); skipping create."
 else
   echo "Registering WebConfig: ${name} -> ${target_url}"
+  # The hub page (index.html) is the crawl entry point: follow its links but do
+  # not index it. It lists every FAQ title, so as a document it matches almost
+  # any question, pushes real answers down and has no category label.
   fessctl webconfig create \
     --name "$name" \
     --url "$target_url" \
     --included-url "http://content/.*" \
+    --excluded-doc-url "http://content/(index\.html)?" \
     --depth "$depth" \
     --max-access-count "$max_access_count" \
     --permission "{role}guest" \
