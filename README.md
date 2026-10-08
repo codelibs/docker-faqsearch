@@ -168,9 +168,13 @@ without it search stays keyword-only:
 FESS_ACCESS_TOKEN=<your-access-token> ./bin/register-faq-crawl.sh
 ```
 
-Re-running it is safe — it skips creation if a `WebConfig` named
-`faq-content` already exists, and always (re-)starts the crawl and the
-vector job.
+Re-running it is safe — it updates an existing `WebConfig` named
+`faq-content` to the settings of the script (URL, included URL, excluded
+document URL, depth, maximum access count, permission) and always (re-)starts
+the crawl and the vector job. Documents that are already indexed are not
+removed when a setting changes. The script exits with a non-zero status and
+says why when the crawl fails, or when the vector job reports `ok` but leaves
+the documents without vectors (it skipped its run).
 
 ### Seed labels, related content, and popular searches
 
