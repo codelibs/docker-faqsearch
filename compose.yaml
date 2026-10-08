@@ -72,7 +72,7 @@ services:
     # ghcr.io/codelibs/fess-opensearch ships the three plugins the hybrid search
     # needs: k-NN (chunk vectors), ML Commons (hosts the embedding model) and
     # Neural Search (the `hybrid` query and its normalization processor).
-    image: ghcr.io/codelibs/fess-opensearch:${OPENSEARCH_VERSION:-3.8.0}
+    image: ghcr.io/codelibs/fess-opensearch:${OPENSEARCH_VERSION:-3.9.0}
     environment:
       - node.name=search01
       - discovery.seed_hosts=search01
@@ -81,7 +81,7 @@ services:
       - bootstrap.memory_lock=true
       # `ml` lets ML Commons run the embedding model on this node.
       - node.roles=cluster_manager,data,ingest,ml
-      - "OPENSEARCH_JAVA_OPTS=-Xms${OPENSEARCH_HEAP:-2g} -Xmx${OPENSEARCH_HEAP:-2g}"
+      - "OPENSEARCH_JAVA_OPTS=-Xms${OPENSEARCH_HEAP:-3g} -Xmx${OPENSEARCH_HEAP:-3g}"
       - "DISABLE_INSTALL_DEMO_CONFIG=true"
       - "DISABLE_SECURITY_PLUGIN=true"
       - "FESS_DICTIONARY_PATH=/usr/share/opensearch/config/dictionary"

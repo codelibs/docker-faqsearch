@@ -118,7 +118,7 @@ docker compose ps   # init-semantic "exited (0)"; the others healthy
 The **first** start downloads the embedding model (~490 MB) inside OpenSearch;
 `fess01` starts only after `init-semantic` has deployed it (a few minutes on
 the first run, seconds afterwards — the deployed model is reused).
-OpenSearch runs with a 2 GB heap (`OPENSEARCH_HEAP`) because it hosts the model.
+OpenSearch runs with a 3 GB heap (`OPENSEARCH_HEAP`) because it hosts the model.
 
 Once running, access Fess at [http://localhost:8080/](http://localhost:8080/)
 — it should render the **helpdesk** theme immediately (home view with
@@ -266,7 +266,8 @@ index.user.initial_password=your-admin-password
 `content_chunker.*` is read **only** from the system-properties channel, so it
 cannot go into `fess_config.properties`; and a value in
 `data/fess/opt/fess/system.properties` would override the `-D` option, so keep
-those keys out of that file. The index mapping (vector dimension, kNN engine)
+those keys out of that file unless you mean to override one (see
+[Tuning](#tuning-for-faq-content)). The index mapping (vector dimension, kNN engine)
 is fixed when the index is created: change `MODEL_DIMENSION` or the model only
 on a fresh index.
 
@@ -279,6 +280,16 @@ on a fresh index.
   ("weather forecast tomorrow") stay below 0.2; the default gives up the
   weakest paraphrases (e.g. "解約したい", 0.27) to keep unrelated questions out. Scores are model-specific:
   re-measure after changing `MODEL_NAME`.
+
+  `0.3` was tuned on the 12 demo FAQs. With about 100 FAQs, 4 of 32
+  out-of-domain questions (12 percent) still returned a hit, because more
+  pages mean more chance that one of them lies near an unrelated question.
+  To try another value without restarting, put
+  `content_chunker.search.min_score=<value>` in
+  `data/fess/opt/fess/system.properties`: Fess reads it on every search (the
+  file is reloaded within a few seconds of the edit) and it overrides the `-D`
+  option that `SEMANTIC_MIN_SCORE` sets. Removing the line restores the
+  `SEMANTIC_MIN_SCORE` value.
 - **`CHUNK_SIZE` (default `1000`)** must be at least as long as your longest
   answer. Once a document is chunked, Fess stores the chunks back into
   `content`; the helpdesk inline answer is one highlighted fragment, so with
