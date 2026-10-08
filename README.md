@@ -385,24 +385,86 @@ git pull
 ```
 
 Live/generated files (`system.properties`, `fess_config.properties`, theme
-assets) are git-ignored and will not be overwritten by `git pull`.
+assets) are git-ignored and will not be overwritten by `git pull`. So is
+`.env`: it keeps the pins it was created with, and `setup.sh` fetches the theme
+only when `data/fess/themes/helpdesk` does not exist.
 
 To upgrade the Fess / OpenSearch version, edit the pins in `.env`
-(`FESS_VERSION`, `OPENSEARCH_VERSION`) and re-run `setup.sh`:
+(`FESS_VERSION`, `OPENSEARCH_VERSION`) — or delete `.env`, and `setup.sh`
+recreates it from `.env.example` — and re-run `setup.sh`:
 
 ```bash
 bash ./bin/setup.sh
 docker compose -f compose.yaml up -d
 ```
 
-> **Re-index after a major version bump**: a Fess or OpenSearch major
-> upgrade can change the index format. If search returns errors or stops
-> returning results after upgrading, re-crawl with
-> `FESS_ACCESS_TOKEN=<token> ./bin/register-faq-crawl.sh`.
+`setup.sh` warns when the pins in an existing `.env` differ from `.env.example`.
+Hybrid search needs Fess 15.9 or later: with an older Fess the stack still
+starts and even deploys the embedding model, but Fess ignores the
+`content_chunker.*` options and answers with keyword search only, without any
+message.
 
-> **Coming from the keyword-only (Fess 15.7) version of this demo**: the old
-> document index has no vector mapping, and the vector dimension is fixed when
-> the index is created. The demo holds nothing but the bundled FAQs, so start
-> from empty data: `docker compose down`, remove `data/opensearch/` and the
-> generated `data/fess/` directories (`home/fess`, `var/`), then run
-> [Getting Started](#getting-started) again.
+> **A crawl does not change the index mapping**: the vector field and its
+> dimension are fixed when the document index is created, so re-crawling with
+> `register-faq-crawl.sh` does not add them to an existing index. Start from
+> empty data or re-index, as described below.
+
+### Coming from the keyword-only (Fess 15.7) version of this demo
+
+That version's document index has no vector mapping, and its `.env` pins Fess
+15.7.0 and OpenSearch 3.7.0. Two ways to move on:
+
+**Start from empty data** (the demo holds nothing but the bundled FAQs):
+
+```bash
+docker compose -f compose.yaml down
+git pull
+rm -rf data/opensearch data/fess/home/fess data/fess/var data/fess/themes .env
+```
+
+Then run [Getting Started](#getting-started) again. Deleting `.env` lets
+`setup.sh` recreate it from `.env.example` (note any value you changed first)
+and deleting `data/fess/themes` fetches the current theme. The access token,
+labels and crawl config live in OpenSearch, so create them again as Getting
+Started describes.
+
+**Keep the documents** (and the access token, labels and crawl config):
+
+1. Update the code, the pins and the theme, and start the new versions:
+
+   ```bash
+   docker compose -f compose.yaml down
+   git pull
+   rm -rf data/fess/themes .env
+   bash ./bin/setup.sh
+   docker compose -f compose.yaml up -d --wait
+   ```
+
+2. In the admin console ([http://localhost:8080/admin/](http://localhost:8080/admin/)),
+   open System Info → Maintenance, tick "Replace Aliases" and press "Start"
+   under "Re-indexing". It copies the documents into a new index created with
+   the current mapping (the vector field and `index.knn`) and points
+   `fess.search` at it.
+3. Fess 15.7 saved its bundled scheduled jobs with the `groovy` execution
+   method, which Fess 15.9 no longer has built in, so the Default Crawler and
+   12 other jobs fail (the Fess log says `Settings use the script engine groovy,
+   which is not registered`). With [fessctl](#install-fessctl) and an
+   [access token](#create-an-access-token) set up, switch them to JavaScript:
+
+   ```bash
+   fessctl scheduler list -o json \
+     | jq -r '.response.settings[] | select(.script_type == "groovy") | .id' \
+     | xargs -n1 -I{} fessctl scheduler update {} --script-type javascript
+   ```
+
+   Thumbnail Purger and Index Exporter use Groovy-only syntax and keep failing;
+   this demo uses neither.
+4. The old crawl config does not exclude the hub page, so the index holds it
+   (13 documents instead of 12). In Crawler → Web → `faq-content` set
+   "Excluded Doc URLs" to `http://content/(index\.html)?`, then delete the
+   hub document under System Info → Search (query `url:"http://content/"`):
+   a crawl does not remove a document that is already indexed.
+5. Run `FESS_ACCESS_TOKEN=<your-access-token> ./bin/register-faq-crawl.sh`.
+   After the crawl it runs the Content Chunk Vector Indexer, which adds the
+   vectors to the copied documents. Then
+   [check that it works](#checking-that-it-works).

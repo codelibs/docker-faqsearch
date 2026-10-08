@@ -9,6 +9,25 @@ if [ ! -f ${base_dir}/.env ]; then
   echo "No .env found; creating one from .env.example..."
   cp ${base_dir}/.env.example ${base_dir}/.env
 fi
+# An existing .env is never overwritten, so it keeps the pins of the checkout it
+# was created on. A Fess older than 15.9 ignores the hybrid search options, so the
+# demo would silently run keyword-only: warn when the pins differ from .env.example.
+env_pin() {
+  sed -n "s/^$2=//p" "${base_dir}/$1" | tail -n1 \
+    | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+for pin in FESS_VERSION OPENSEARCH_VERSION; do
+  pinned=$(env_pin .env "${pin}")
+  expected=$(env_pin .env.example "${pin}")
+  if [ -n "${pinned}" ] && [ "${pinned}" != "${expected}" ]; then
+    echo "WARNING: .env pins ${pin}=${pinned}, but .env.example has ${expected}." >&2
+    differs=1
+  fi
+done
+if [ -n "${differs:-}" ]; then
+  echo "         Keep it only if that is intended. Otherwise remove .env and run setup.sh again" >&2
+  echo "         (see \"Updating\" in the README)." >&2
+fi
 # fess-script-groovy is no longer downloaded: the Groovy script engine is
 # bundled in Fess core since 15.0.
 # No Fess data store plugins are needed for this demo: the FAQ content is
