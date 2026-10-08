@@ -183,7 +183,9 @@ This registers the data the helpdesk theme is designed around (see
 below) and seeds enough search-log history for "Popular searches" to show
 something on a fresh instance — see
 [Why seed-faq.sh seeds search logs](#why-seed-faqsh-seeds-search-logs) for
-why that step is otherwise unavoidable.
+why that step is otherwise unavoidable. Re-running the script is safe: it
+creates only what is missing (labels are matched by value, related content and
+related queries by term) and issues the search-log rounds again.
 
 ### Search
 

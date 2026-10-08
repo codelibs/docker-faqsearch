@@ -70,6 +70,25 @@ if d.get("status") != 0:
 '
 }
 
+# registered <fessctl command> <field>: the <field> of every item that command
+# lists, one per line. Fails when the list cannot be read, so that a failed
+# lookup is never mistaken for "nothing registered yet" (which would duplicate
+# every item).
+registered() {
+  fessctl "$1" list -o json | python3 -c '
+import sys, json
+d = json.load(sys.stdin).get("response", {})
+if d.get("status") != 0:
+    sys.stderr.write("fessctl: " + str(d.get("message", "list failed")) + "\n")
+    sys.exit(1)
+for s in d.get("settings", []):
+    print(s.get(sys.argv[1], ""))
+' "$2"
+}
+
+# already <registered output> <key>: succeeds when <key> is one of its lines.
+already() { grep -qxF -- "$2" <<<"$1"; }
+
 # ---------------------------------------------------------------------------
 # 1. Labels — power both the home view category tiles and the facet sidebar
 #    Category group (query.facet.fields=label). included_paths match both
@@ -80,9 +99,16 @@ if d.get("status") != 0:
 if [ "$do_labels" -eq 1 ]; then
   echo "== Registering labels =="
 
+  # A re-run creates only the labels whose value is not registered yet.
+  existing_labels=$(registered labeltype value)
+
   create_label() {
     local name="$1" value="$2" sort_order="$3"; shift 3
     local paths=("$@")
+    if already "$existing_labels" "$value"; then
+      echo "  ${name} (value=${value}): already registered; skipping"
+      return 0
+    fi
     local args=(--name "$name" --value "$value" --version-no 0 --sort-order "$sort_order" --permission "{role}guest" --created-time "$(now_ms)")
     for p in "${paths[@]}"; do
       args+=(--included-path "$p")
@@ -116,19 +142,29 @@ fi
 if [ "$do_related" -eq 1 ]; then
   echo "== Registering related content =="
 
-  fessctl relatedcontent create \
-    --term "password reset" \
-    --content '<p>Forgot your password? On the login screen, select <strong>Forgot your password?</strong> and follow the reset link emailed to you (valid for 24 hours).</p>' \
-    --sort-order 1 \
-    --created-time "$(now_ms)" \
-    -o json | check_status
+  # A re-run creates only the terms that are not registered yet.
+  existing_content_terms=$(registered relatedcontent term)
 
-  fessctl relatedcontent create \
-    --term 'regex:.*(cancel|退会).*' \
-    --content '<p>Looking to cancel your account or complete 退会手続き? Export your data first from Settings, then use Settings &gt; Account &gt; Cancel Account. Cancellation takes effect immediately.</p>' \
-    --sort-order 2 \
-    --created-time "$(now_ms)" \
-    -o json | check_status
+  create_related_content() {
+    local term="$1" content="$2" sort_order="$3"
+    if already "$existing_content_terms" "$term"; then
+      echo "  ${term}: already registered; skipping"
+      return 0
+    fi
+    echo "  ${term}"
+    fessctl relatedcontent create \
+      --term "$term" \
+      --content "$content" \
+      --sort-order "$sort_order" \
+      --created-time "$(now_ms)" \
+      -o json | check_status
+  }
+
+  create_related_content "password reset" \
+    '<p>Forgot your password? On the login screen, select <strong>Forgot your password?</strong> and follow the reset link emailed to you (valid for 24 hours).</p>' 1
+
+  create_related_content 'regex:.*(cancel|退会).*' \
+    '<p>Looking to cancel your account or complete 退会手続き? Export your data first from Settings, then use Settings &gt; Account &gt; Cancel Account. Cancellation takes effect immediately.</p>' 2
 
   # -------------------------------------------------------------------------
   # 3. Related query — exactly ONE. See README: this OR-expands into the
@@ -137,12 +173,16 @@ if [ "$do_related" -eq 1 ]; then
   #    than one here without reading that section first is a mistake.
   # -------------------------------------------------------------------------
   echo "== Registering related query (1 only; see README for the side effect) =="
-  fessctl relatedquery create \
-    --term "password" \
-    --queries "password reset" \
-    --version-no 0 \
-    --created-time "$(now_ms)" \
-    -o json | check_status
+  if already "$(registered relatedquery term)" "password"; then
+    echo "  password: already registered; skipping"
+  else
+    fessctl relatedquery create \
+      --term "password" \
+      --queries "password reset" \
+      --version-no 0 \
+      --created-time "$(now_ms)" \
+      -o json | check_status
+  fi
 fi
 
 # ---------------------------------------------------------------------------
