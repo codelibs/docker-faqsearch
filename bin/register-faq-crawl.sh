@@ -13,6 +13,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 register-faq-crawl.sh — register the FAQ WebConfig (http://content/) and crawl it (via fessctl).
+An existing WebConfig of that name is updated to the settings below.
 
 Usage:
   FESS_ACCESS_TOKEN=<token> ./bin/register-faq-crawl.sh [options]
@@ -62,7 +63,8 @@ command -v python3 >/dev/null 2>&1 || die "python3 not found."
 name="faq-content"
 target_url="http://content/"
 
-# --- skip create if a WebConfig with this name already exists (idempotent re-runs) ---
+# --- register the WebConfig, or bring an existing one (idempotent re-runs, an
+#     install that predates a change of these settings) to the same settings ---
 existing=$(fessctl webconfig list -o json 2>/dev/null | python3 -c '
 import sys, json
 try:
@@ -76,30 +78,38 @@ for s in d.get("response", {}).get("settings", []):
         break
 ' "$name" || true)
 
-if [ -n "$existing" ]; then
-  echo "WebConfig already registered: ${name} (id=${existing}); skipping create."
-else
-  echo "Registering WebConfig: ${name} -> ${target_url}"
-  # The hub page (index.html) is the crawl entry point: follow its links but do
-  # not index it. It lists every FAQ title, so as a document it matches almost
-  # any question, pushes real answers down and has no category label.
-  fessctl webconfig create \
-    --name "$name" \
-    --url "$target_url" \
-    --included-url "http://content/.*" \
-    --excluded-doc-url "http://content/(index\.html)?" \
-    --depth "$depth" \
-    --max-access-count "$max_access_count" \
-    --permission "{role}guest" \
-    -o json \
-  | python3 -c '
+# The hub page (index.html) is the crawl entry point: follow its links but do
+# not index it. It lists every FAQ title, so as a document it matches almost
+# any question, pushes real answers down and has no category label.
+webconfig_args=(
+  --url "$target_url"
+  --included-url "http://content/.*"
+  --excluded-doc-url "http://content/(index\.html)?"
+  --depth "$depth"
+  --max-access-count "$max_access_count"
+  --permission "{role}guest"
+)
+
+# --- webconfig_result <verb>: check a fessctl create/update answer on stdin ---
+webconfig_result() {
+  python3 -c '
 import sys, json
 d = json.load(sys.stdin).get("response", {})
 if d.get("status") != 0:
-    sys.stderr.write("fessctl: " + str(d.get("message", "create failed")) + "\n")
+    sys.stderr.write("fessctl: " + str(d.get("message", "request failed")) + "\n")
     sys.exit(1)
-print("Created WebConfig id=" + str(d.get("id", "")))
-' || die "failed to create the WebConfig."
+print(sys.argv[1] + " WebConfig id=" + str(d.get("id", "")))
+' "$1"
+}
+
+if [ -n "$existing" ]; then
+  echo "WebConfig already registered: ${name} (id=${existing}); updating it to the settings of this script."
+  fessctl webconfig update "$existing" "${webconfig_args[@]}" -o json | webconfig_result Updated \
+    || die "failed to update the WebConfig."
+else
+  echo "Registering WebConfig: ${name} -> ${target_url}"
+  fessctl webconfig create --name "$name" "${webconfig_args[@]}" -o json | webconfig_result Created \
+    || die "failed to create the WebConfig."
 fi
 
 if [ "$crawl" -ne 1 ]; then
@@ -140,7 +150,7 @@ for log in d.get("response", {}).get("logs", []):
 }
 
 # --- wait_job <job name> <id of the run before the start>: poll the job log until
-#     a NEWER run of that job has finished ---
+#     a NEWER run of that job has finished; fails unless it finished ok ---
 wait_job() {
   local job_name="$1" before="$2" max_wait="${MAX_WAIT:-600}" elapsed=0 interval=5 run id status
   while [ "$elapsed" -lt "$max_wait" ]; do
@@ -149,9 +159,13 @@ wait_job() {
     [ -n "$run" ] && [ "$id" != "$before" ] || status=""
     case "$status" in
       *[Rr]unning*|"") ;;
-      *)
-        echo "${job_name} finished (job_status=${status})."
+      ok)
+        echo "${job_name} finished (job_status=ok)."
         return 0
+        ;;
+      *)
+        echo "${job_name} did not succeed (job_status=${status}); check ${FESS_ENDPOINT}/admin/joblog/ and the Fess log." >&2
+        return 1
         ;;
     esac
     sleep "$interval"
@@ -179,7 +193,7 @@ if [ "$wait_for_crawl" -ne 1 ]; then
 fi
 
 echo "Waiting for the crawl to finish (polling job log)..."
-wait_job "Default Crawler" "$crawl_before" || exit 1
+wait_job "Default Crawler" "$crawl_before" || die "the crawl did not succeed. After an upgrade from the keyword-only version, scheduled jobs that still use the groovy script engine fail like this: see \"Updating\" in the README."
 
 # --- generate the chunk vectors (the semantic half of the hybrid search) ---
 # Fess embeds documents only from the Content Chunk Vector Indexer job, never at
@@ -190,14 +204,18 @@ wait_job "Default Crawler" "$crawl_before" || exit 1
 vector_job_id="content-chunk-vector-indexer"
 vector_job_name="Content Chunk Vector Indexer"
 echo "Enabling the ${vector_job_name} (${vector_job_id})..."
+# A Fess older than 15.9 has no such job and answers with plain text, not JSON.
 fessctl scheduler update "$vector_job_id" --available --cron-expression "${VECTOR_JOB_CRON:-0 * * * *}" -o json \
 | python3 -c '
 import sys, json
-d = json.load(sys.stdin).get("response", {})
+try:
+    d = json.load(sys.stdin).get("response", {})
+except ValueError:
+    d = {}
 if d.get("status") != 0:
     sys.stderr.write("fessctl: " + str(d.get("message", "update failed")) + "\n")
     sys.exit(1)
-' || die "failed to enable ${vector_job_id}."
+' || die "failed to enable ${vector_job_id}. Likely cause: Fess older than 15.9, which has no such job and no hybrid search; check FESS_VERSION in .env and see \"Updating\" in the README."
 
 vector_before=$(latest_run "$vector_job_name"); vector_before="${vector_before%% *}"
 echo "Starting the ${vector_job_name}..."
@@ -214,4 +232,24 @@ sys.exit(0 if json.load(sys.stdin).get("response", {}).get("status") == 0 else 1
 done
 [ "$started" -eq 1 ] || die "could not start ${vector_job_id}; start it from ${FESS_ENDPOINT}/admin/scheduler/."
 wait_job "$vector_job_name" "$vector_before" || exit 1
+
+# The job log says ok even when the job skipped its run (for example because the
+# embedding model is not deployed, or the document index has no vector mapping, as
+# after an upgrade from the keyword-only version; the reason is only in
+# fess-chunk.log). Confirm that documents carry their vectors: check
+# content_chunk_status of the first page of the search list.
+python3 - "$FESS_ENDPOINT" <<'EOF' || die "the ${vector_job_name} reported ok but the documents have no vectors, so it skipped its run. The reason is in fess-chunk.log, for example the embedding model is not deployed, or the document index was created before the vector mapping existed (see \"Updating\" in the README)."
+import json, os, sys, urllib.request
+
+def admin_get(path):
+    req = urllib.request.Request(sys.argv[1] + path, headers={"Authorization": "Bearer " + os.environ["FESS_ACCESS_TOKEN"]})
+    with urllib.request.urlopen(req, timeout=30) as res:
+        return json.load(res)["response"]
+
+docs = admin_get("/api/admin/searchlist/docs").get("docs", [])
+states = [admin_get("/api/admin/searchlist/doc/" + d["doc_id"]).get("doc", {}).get("content_chunk_status", "none") for d in docs]
+if not docs or any(state != "done" for state in states):
+    sys.stderr.write("content_chunk_status of %d documents: %s\n" % (len(docs), ", ".join(sorted(set(states))) or "no documents"))
+    sys.exit(1)
+EOF
 echo "Results: ${FESS_ENDPOINT}/"
