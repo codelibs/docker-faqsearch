@@ -31,15 +31,21 @@ env_get() {
 }
 # Keep this fallback in sync with .env.example and compose.yaml.
 FESS_VERSION="${FESS_VERSION:-$(env_get FESS_VERSION)}"
-FESS_VERSION="${FESS_VERSION:-15.9.0}"
+FESS_VERSION="${FESS_VERSION:-snapshot}"
 
 overlay="${base_dir}/conf/fess_config.overlay.properties"
 local_overlay="${base_dir}/conf/fess_config.local.properties"
 out_dir="${base_dir}/data/fess/opt/fess"
 out="${out_dir}/fess_config.properties"
-# FESS_CONFIG_BASE_REF overrides the git ref the base is fetched from (e.g.
-# `main` when running a development snapshot image that has no release tag).
-base_ref="${FESS_CONFIG_BASE_REF:-fess-${FESS_VERSION}}"
+# FESS_CONFIG_BASE_REF overrides the git ref the base is fetched from. A
+# development image (snapshot, snapshot-<os>, <x.y.z>-SNAPSHOT) has no release
+# tag, so its base comes from `main`; a release image (<x.y.z>, <x.y.z>-<os>)
+# comes from the `fess-<x.y.z>` tag.
+case "${FESS_VERSION}" in
+  snapshot | snapshot-* | *-SNAPSHOT | *-snapshot) default_base_ref="main" ;;
+  *) default_base_ref="fess-${FESS_VERSION}" ;;
+esac
+base_ref="${FESS_CONFIG_BASE_REF:-${default_base_ref}}"
 cache="${out_dir}/.fess_config.base-${base_ref}.properties"
 url="https://raw.githubusercontent.com/codelibs/fess/${base_ref}/src/main/resources/fess_config.properties"
 
@@ -47,7 +53,9 @@ url="https://raw.githubusercontent.com/codelibs/fess/${base_ref}/src/main/resour
 mkdir -p "${out_dir}"
 
 # --- fetch base once per version (cached, offline-friendly afterwards) ---
-if [ ! -s "${cache}" ]; then
+# A tag is immutable, so its cache is authoritative; a branch moves, so it is
+# fetched again on every run.
+if [ ! -s "${cache}" ] || [ "${base_ref}" = "${base_ref#fess-}" ]; then
   echo "Fetching base fess_config.properties (${base_ref})..."
   curl -LfsS "${url}" -o "${cache}"
 fi
