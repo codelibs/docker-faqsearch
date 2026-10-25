@@ -35,7 +35,7 @@ fi
 # not through a data store connector like fess-ds-git (codesearch's Git crawl).
 fess_plugins=""
 
-# fess-themes branch to fetch the helpdesk static theme from.
+# fess-themes branch to fetch the helpdesk theme from.
 # Override with FESS_THEMES_BRANCH=<branch> to test theme changes from another
 # branch.
 fess_themes_branch="${FESS_THEMES_BRANCH:-main}"
@@ -71,7 +71,7 @@ for fess_plugin in ${fess_plugins} ; do
     https://repo1.maven.org/maven2/org/codelibs/fess/${plugin_name}/${plugin_version}/${plugin_name}-${plugin_version}.jar
 done
 
-# Fetch helpdesk static theme from fess-themes repo (clones ${fess_themes_branch}).
+# Fetch helpdesk theme from fess-themes repo (clones ${fess_themes_branch}).
 if [ ! -d ${base_dir}/data/fess/themes/helpdesk ]; then
   echo "Fetching helpdesk theme from fess-themes (branch: ${fess_themes_branch})..."
   mkdir -p ${base_dir}/data/fess/themes/helpdesk

@@ -19,7 +19,7 @@ stays self-contained.
 
 ## Architecture / Theme Model
 
-- **Theme**: Fess static theme system (15.7+) — `theme.default=helpdesk` in
+- **Theme**: Fess theme system (15.7+) — `theme.default=helpdesk` in
   `system.properties` selects the helpdesk theme. **This is a system
   property, not a `fess_config.properties` key** — see
   `Constants.DEFAULT_THEME_PROPERTY` / `FessProp.getDefaultTheme()` /
@@ -58,7 +58,7 @@ stays self-contained.
   (`data/fess/opt/fess/system.properties`) is generated from
   `data/fess/opt/fess/system.properties.template` by `setup.sh` on first
   run. The live file is git-ignored.
-- **Theme files**: The helpdesk static theme is fetched from
+- **Theme files**: The helpdesk theme is fetched from
   [fess-themes](https://github.com/codelibs/fess-themes) by `setup.sh` and
   stored in `data/fess/themes/helpdesk/`. This directory is mounted into the
   container at `/usr/share/fess/app/themes/helpdesk`.
@@ -102,7 +102,7 @@ $ bash ./bin/setup.sh
 
 `setup.sh` will:
 1. Create required data directories
-2. Fetch the helpdesk static theme from fess-themes (if not already present)
+2. Fetch the helpdesk theme from fess-themes (if not already present)
 3. Generate `data/fess/opt/fess/system.properties` from the template (if not
    already present) — this is where `theme.default=helpdesk` lives
 4. Generate `data/fess/opt/fess/fess_config.properties` from the pinned base
