@@ -57,7 +57,7 @@ services:
       - ./data/fess/var/lib/fess:/var/lib/fess
       - ./data/fess/var/log/fess:/var/log/fess
       - ./data/fess/usr/share/fess/app/WEB-INF/plugin:/usr/share/fess/app/WEB-INF/plugin
-      # Static theme fetched from fess-themes by setup.sh; mounted at the Fess app
+      # Theme fetched from fess-themes by setup.sh; mounted at the Fess app
       # themes dir (served at /themes/helpdesk).
       - ./data/fess/themes/helpdesk:/usr/share/fess/app/themes/helpdesk
     logging:
